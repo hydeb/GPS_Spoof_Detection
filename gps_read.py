@@ -13,6 +13,7 @@ TIME_ZONE_OFFSET = -5 #EDT = UTC-5:00
 
 GPGSA_msg = pynmea2.parse("$GPGSA,A,1,,,,,,,,,,,,,99.99,99.99,99.99*30")
 msg = GPGSA_msg
+prev_gps_msg_trusted = 1
 
 def _scan_ports():
 	if sys.platform.startswith('win'):
@@ -36,13 +37,6 @@ def logfilename():
 				(now.year, now.month, now.day,
 				 now.hour, now.minute, now.second)
 
-current_datetime = datetime.utcnow()
-print(current_datetime)
-current_timetuple = current_datetime.utctimetuple()
-print(current_timetuple)
-current_timestamp = calendar.timegm(current_timetuple)
-print(current_timestamp)
-
 try:
 	while True:
 		ports = _scan_ports()
@@ -53,7 +47,7 @@ try:
 
 		for port in ports:
 			# try to open serial port
-			sys.stderr.write('Trying port %s\n' % port)
+			#sys.stderr.write('Trying port %s\n' % port)
 			try:
 				# try to read a line of data from the serial port and parse
 				with serial.Serial(port, 4800, timeout=1) as ser:
@@ -75,47 +69,42 @@ try:
 							f.write(line)
 							
 							msg = pynmea2.parse(line.decode('ascii', errors='replace').strip())
-							#msg2 = pynmea2.parse(line)
-							#print(f"{msg=}")
 							print("messages:", repr(type(msg)))
-							if 'GSA' in repr(type(msg)):
-								# Save GPGSA message to check the GPS fix
-								GPGSA_msg = msg
-								print("GPGSA message:", msg)
-							if ('RMC' in repr(type(msg))) and (FIX_2D <= int(GPGSA_msg.mode_fix_type)):
-								print("Message timestamp:", msg.timestamp)
-								print("Message date:", msg.datetime)
-								# UTC time status of position (hours/minutes/seconds/ decimal seconds), hhmmss.ss, eg. 202134.00
-								gps_utc_time = (HOURS_POSITION * msg.timestamp.hour) + (MINUTES_POSITION * msg.timestamp.minute) + msg.timestamp.second
-								gps_utc_date = msg.datetime
-								print("gps_utc_date", gps_utc_date)
-								now = datetime.utcnow()
-								#u = u.replace(tzinfo=pytz.utc) #NOTE: it works only with a fixed utc offset
-								print ("utctime: ", now)
-								#now = datetime.now()
-								sys_time_utc = now.replace(tzinfo=timezone.utc).timestamp()
-								print("sys_time_utc", sys_time_utc)
-								print('Current time (UTC):', int(sys_time_utc))
-								
-								msg_timetuple = gps_utc_date.utctimetuple()
-								print(msg_timetuple)
-								msg_timestamp = calendar.timegm(msg_timetuple)
-								print(msg_timestamp)
-								a = int(sys_time_utc)-msg_timestamp
-								print("int(sys_time_utc)-msg_timestamp = ", a)
-								if abs(int(sys_time_utc)-msg_timestamp)>TIME_THRESHOLD:
-									#f = open("logfile.txt", "a")
-									warning_message = "WARNING; GPS spoofing is likely occuring. Timestamp:" + str(msg.timestamp) + "\n"
-									print(warning_message)
-									#f.write(warning_message)
-									#f.close()
-				
+							try:
+								if 'GSA' in repr(type(msg)):
+									# Save GPGSA message to check the GPS fix
+									GPGSA_msg = msg
+								if ('RMC' in repr(type(msg))) and (FIX_2D <= int(GPGSA_msg.mode_fix_type)):
+									# UTC time status of position (hours/minutes/seconds/ decimal seconds), hhmmss.ss, eg. 202134.00
+									gps_utc_time = (HOURS_POSITION * msg.timestamp.hour) + (MINUTES_POSITION * msg.timestamp.minute) + msg.timestamp.second
+									gps_utc_date = msg.datetime
+									print("gps_utc_date", gps_utc_date)
+									now = datetime.utcnow()
+									print ("utctime: ", now)
+									sys_time_utc = now.replace(tzinfo=timezone.utc).timestamp()
+									
+									msg_timetuple = gps_utc_date.utctimetuple()
+									msg_timestamp = calendar.timegm(msg_timetuple)
+									a = int(sys_time_utc)-msg_timestamp
+									if (abs(int(sys_time_utc)-msg_timestamp)>TIME_THRESHOLD):
+										if (1 == prev_gps_msg_trusted):
+											# Log only once when spoofing occurs
+											gps_message_trusted = 0
+											f = open("logfile.txt", "a")
+											warning_message = "WARNING; GPS spoofing is likely occuring. GPS timestamp (UTC):" + str(msg.datetime) + "System Time (UTC): " + now + "\n"
+											print(warning_message)
+											f.write(warning_message)
+											f.close()
+									else:
+										gps_message_trusted = 1
+							except Exception as e:
+								sys.stderr.write('Error reading NMEA message')
 			except Exception as e:
 				sys.stderr.write('Error reading serial port %s: %s\n' % (type(e).__name__, e))
 			except KeyboardInterrupt as e:
 				sys.stderr.write('Ctrl-C pressed, exiting log of %s to %s\n' % (port, outfname))
 
-		sys.stderr.write('Scanned all ports, waiting 10 seconds...press Ctrl-C to quit...\n')
-		time.sleep(10)
+		sys.stderr.write('Scanned all ports, waiting 5 seconds...press Ctrl-C to quit...\n')
+		time.sleep(5)
 except KeyboardInterrupt:
 	sys.stderr.write('Ctrl-C pressed, exiting port scanner\n')
